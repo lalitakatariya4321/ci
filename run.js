@@ -1,5 +1,6 @@
 const fetch = require('node-fetch');
 const fs = require('fs');
+const path = require('path');
 const winston = require('winston');
 
 // Set up logging
@@ -19,6 +20,14 @@ const CHANNELS_URL = "https://fox.toxic-gang.xyz/tata/channels";
 const HMAC_URL = "https://fox.toxic-gang.xyz/tata/hmac";
 const KEY_URL = "https://fox.toxic-gang.xyz/tata/key/";
 const RETRIES = 3;
+const CACHE_DIR = "_cache_";
+const CACHE_TIME = 60; // 1 minute for manifest and key caching
+const M3U_CACHE_TIME = 7200; // 2 hours for M3U caching
+
+// Ensure cache directory exists
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
 
 async function fetchApi(url, retries) {
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -39,7 +48,85 @@ async function fetchApi(url, retries) {
   }
 }
 
-function generateM3U8(channelsData, hmacData) {
+async function fetchAndCache(url, cacheFile, cacheTime) {
+  if (fs.existsSync(cacheFile) && (Date.now() - fs.statSync(cacheFile).mtimeMs) < cacheTime * 1000) {
+    return JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  }
+
+  const data = await fetchApi(url, RETRIES);
+  if (data) {
+    fs.writeFileSync(cacheFile, JSON.stringify(data));
+    return data;
+  }
+
+  return null;
+}
+
+async function generateManifest(id) {
+  const cacheFile = path.join(CACHE_DIR, `TP-${id}.mpd`);
+
+  if (fs.existsSync(cacheFile) && (Date.now() - fs.statSync(cacheFile).mtimeMs) < CACHE_TIME * 1000) {
+    return fs.readFileSync(cacheFile, 'utf8');
+  }
+
+  const data = await fetchApi(`${KEY_URL}${id}`, RETRIES);
+  if (!data) return null;
+
+  const initialUrl = data[0].data.initialUrl;
+  const psshSet = data[0].data.psshSet;
+  const kid = data[0].data.kid;
+  let bssh = initialUrl.replace('bpweb', 'bpprod').replace('akamaized-staging', 'akamaized');
+
+  let manifestContent = await fetchApi(bssh, RETRIES);
+  if (!manifestContent) return null;
+
+  manifestContent = manifestContent
+    .replace('<BaseURL>dash/</BaseURL>', `<BaseURL>${bssh.replace("toxicify.mpd", "dash/")}</BaseURL>`)
+    .replace(/\b(init.*?\.dash|media.*?\.m4s)(\?idt=[^"&]*)?("|\b)(\?decryption_key=[^"&]*)?("|\b)(&idt=[^&"]*(&|$))?/g, "$1$3$5$6$7")
+    .replace(/<ContentProtection\s+schemeIdUri="(urn:[^"]+)"\s+value="Widevine"\/>/, `<ContentProtection schemeIdUri="$1"><cenc:pssh>${psshSet}</cenc:pssh></ContentProtection>`)
+    .replace('xmlns="urn:mpeg:dash:schema:mpd:2011"', 'xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013"');
+  const newContent = `<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc" cenc:default_KID="${kid}"/>`;
+  manifestContent = manifestContent.replace('<ContentProtection value="cenc" schemeIdUri="urn:mpeg:dash:mp4protection:2011"/>', newContent);
+
+  fs.writeFileSync(cacheFile, manifestContent);
+  return manifestContent;
+}
+
+async function generateKeys(id) {
+  const cacheFile = path.join(CACHE_DIR, `TP-${id}.json`);
+
+  if (fs.existsSync(cacheFile) && (Date.now() - fs.statSync(cacheFile).mtimeMs) < CACHE_TIME * 1000) {
+    return JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  }
+
+  const data = await fetchApi(`${KEY_URL}${id}`, RETRIES);
+  if (!data) return null;
+
+  const kid = data[0].data.licence1;
+  const key = data[0].data.licence2;
+
+  const binaryKid = Buffer.from(kid, 'hex');
+  const binaryKey = Buffer.from(key, 'hex');
+
+  const encodedKid = binaryKid.toString('base64url');
+  const encodedKey = binaryKey.toString('base64url');
+
+  const response = {
+    keys: [
+      {
+        kty: "oct",
+        k: encodedKey,
+        kid: encodedKid
+      }
+    ],
+    type: "temporary"
+  };
+
+  fs.writeFileSync(cacheFile, JSON.stringify(response));
+  return response;
+}
+
+async function generateM3U8(channelsData, hmacData) {
   let m3u8Content = `#EXTM3U x-tvg-url="https://raw.githubusercontent.com/mitthu786/tvepg/main/tataplay/epg.xml.gz"\n\n`;
 
   for (const channel of channelsData.data) {
@@ -48,7 +135,7 @@ function generateM3U8(channelsData, hmacData) {
       const userAgent = hmacData.userAgent;
       const cookie = hmacData.data.hdntl;
 
-      m3u8Content += `#EXTINF:-1 tvg-id="${channel.id}" group-title="${channel.genre}", tvg-logo="${channel.logo}", ${channel.title}\n`;
+      m3u8Content += `#EXTINF:-1 tvg-id="${channel.id}" group-title="${channel.genre}" tvg-logo="${channel.logo}", ${channel.title}\n`;
       m3u8Content += `#KODIPROP:inputstream.adaptive.license_type=clearkey\n`;
       m3u8Content += `#KODIPROP:inputstream.adaptive.license_key=${JSON.stringify(clearkey)}\n`;
       m3u8Content += `#EXTVLCOPT:http-user-agent=${userAgent}\n`;
@@ -61,11 +148,11 @@ function generateM3U8(channelsData, hmacData) {
 }
 
 async function main() {
-  const channelsData = await fetchApi(CHANNELS_URL, RETRIES);
-  const hmacData = await fetchApi(HMAC_URL, RETRIES);
+  const channelsData = await fetchAndCache(CHANNELS_URL, path.join(CACHE_DIR, 'channels.json'), M3U_CACHE_TIME);
+  const hmacData = await fetchAndCache(HMAC_URL, path.join(CACHE_DIR, 'hmac.json'), M3U_CACHE_TIME);
 
   if (channelsData && hmacData) {
-    const m3u8Content = generateM3U8(channelsData, hmacData);
+    const m3u8Content = await generateM3U8(channelsData, hmacData);
     fs.writeFileSync('ts.m3u', m3u8Content);
     logger.info("M3U8 playlist generated and saved to ts.m3u");
   } else {
