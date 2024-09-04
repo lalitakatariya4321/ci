@@ -18,7 +18,7 @@ const logger = winston.createLogger({
 // Constants
 const CHANNELS_URL = "https://babel-in.xyz/babel-b2ef9ad8f0d432962d47009b24dee465/tata/channels";
 const HMAC_URL = "https://babel-in.xyz/babel-b2ef9ad8f0d432962d47009b24dee465/tata/hmac";
-const KEY_URL = "https://fox.toxic-gang.xyz/tata/key/";
+const KEY_URL = "https://babel-in.xyz/babel-b2ef9ad8f0d432962d47009b24dee465/tata/key";
 const RETRIES = 3;
 const CACHE_DIR = "_cache_";
 const CACHE_TIME = 60; // 1 minute for manifest and key caching
