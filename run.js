@@ -18,7 +18,7 @@ const logger = winston.createLogger({
 // Constants
 const CHANNELS_URL = "https://tatazainiapi.netlify.app/channels.json";
 const HMAC_URL = "https://tatazainiapi.netlify.app/hmac.json";
-const KEY_URL = "https://babel-in.xyz/babel-b2ef9ad8f0d432962d47009b24dee465/tata/key";
+const KEY_URL = "";
 const RETRIES = 3;
 const CACHE_DIR = "_cache_";
 const CACHE_TIME = 60; // 1 minute for manifest and key caching
