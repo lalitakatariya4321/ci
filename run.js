@@ -16,8 +16,8 @@ const logger = winston.createLogger({
 });
 
 // Constants
-const CHANNELS_URL = "https://babel-in.xyz/babel-469c814cea6a2f626809c9b6f1f966a4/tata/channels";
-const HMAC_URL = "https://babel-in.xyz/babel-469c814cea6a2f626809c9b6f1f966a4/tata/hmac";
+const CHANNELS_URL = "https://tataskyzainiapi.vercel.app/channels.json";
+const HMAC_URL = "https://tataskyzainiapi.vercel.app/hmac.json";
 const KEY_URL = "";
 const RETRIES = 3;
 const CACHE_DIR = "_cache_";
